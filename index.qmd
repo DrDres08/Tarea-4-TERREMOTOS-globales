@@ -1,0 +1,277 @@
+---
+title: "Análisis de terremotos"
+subtitle: "Datos Sísmicos Globales"
+format:
+  dashboard:
+    orientation: columns
+    theme: cayman
+    nav-buttons: 
+      - icon: github
+        href: https://github.com
+      - facebook
+      - twitter
+      - linkedin
+---
+
+```{r}
+#| include: false
+library(tidyverse)
+library(sf)
+library(plotly)
+library(DT)
+library(tmap)
+library(bslib)
+library(bsicons)
+
+# Cargar datos
+terremotos <- read_csv("terremotos.csv")
+
+# Limpiar datos
+terremotos_clean <- terremotos %>%
+  filter(!is.na(latitude), !is.na(longitude), !is.na(richter)) %>%
+  mutate(
+    mag_categoria = case_when(
+      richter < 5.0 ~ "Menor",
+      richter >= 5.0 & richter < 6.0 ~ "Moderado", 
+      richter >= 6.0 & richter < 7.0 ~ "Fuerte",
+      richter >= 7.0 ~ "Mayor"
+    )
+  )
+
+tmap_mode("view")
+```
+# Resumen
+## Row
+### Column {width=25%}
+```{r}
+#| content: valuebox
+#| title: "Total de terremotos"
+total_terremotos <- nrow(terremotos_clean)
+if(total_terremotos >= 1000) {
+  valor_mostrar <- paste0(round(total_terremotos/1000, 1), "K")
+} else {
+  valor_mostrar <- format(total_terremotos, big.mark = ",")
+}
+
+list(
+  value = valor_mostrar,
+  icon = "activity",
+  color = "primary"
+)
+```
+
+### Column {width=25%}
+```{r}
+#| content: valuebox
+#| title: "Magnitud Máxima"
+mag_max <- round(max(terremotos_clean$richter, na.rm = TRUE), 1)
+list(
+  value = mag_max,
+  icon = "exclamation-triangle",
+  color = "danger"
+)
+```
+
+### Column {width=25%}
+```{r}
+#| content: valuebox
+#| title: "Terremotos Fuertes"
+fuertes_count <- sum(terremotos_clean$richter >= 6.0, na.rm = TRUE)
+list(
+  value = fuertes_count,
+  icon = "lightning",  
+  color = "warning"
+)
+```
+
+### Column {width=25%}
+```{r}
+#| content: valuebox
+#| title: "Profundidad Promedio"
+prof_promedio <- round(mean(terremotos_clean$focal_depth, na.rm = TRUE), 1)
+list(
+  value = paste0(prof_promedio, " km"),
+  icon = "arrow-down",
+  color = "info"
+)
+```
+
+## Row
+
+### Column {width=60%}
+```{r}
+#| title: "Mapa de Terremotos Significativos"
+
+
+set.seed(123)  
+muestra <- terremotos_clean %>%
+  filter(richter >= 4.0) %>%
+  slice_sample(n = min(800, nrow(.)))
+
+muestra_sf <- st_as_sf(muestra, coords = c("longitude", "latitude"), crs = 4326)
+
+#Mapa
+mapa <- tm_basemap("OpenStreetMap") +
+  tm_shape(muestra_sf) +
+  tm_dots(
+    col = "richter", 
+    size = "richter",
+    palette = "Reds",
+    title = "Magnitud Richter",
+    popup.vars = c("Magnitud" = "richter", 
+                   "Profundidad" = "focal_depth",
+                   "Categoría" = "mag_categoria"),
+    scale = 1.2,
+    alpha = 0.7
+  ) +
+  tm_scale_bar(position = c("left", "bottom"))
+
+mapa
+```
+
+### Column {width=40%}
+```{r}
+#| title: "Top 20 Terremotos Más Fuertes"
+
+# Crear tabla compacta
+fuertes <- terremotos_clean %>%
+  filter(richter >= 6.0) %>%
+  arrange(desc(richter)) %>%
+  select(latitude, longitude, richter, focal_depth) %>%
+  head(20)
+
+# Tabla con formato compacto
+datatable(fuertes, 
+          colnames = c("Latitud", "Longitud", "Magnitud", "Profundidad"),
+          options = list(
+            pageLength = 8,
+            scrollY = "300px",
+            scrollX = TRUE,
+            dom = 'ft',
+            columnDefs = list(
+              list(width = '25%', targets = c(0, 1)),
+              list(width = '25%', targets = c(2, 3))
+            )
+          ),
+          class = 'compact stripe') %>%
+  formatRound(columns = c("richter", "focal_depth"), digits = 1) %>%
+  formatStyle("richter",
+              background = styleColorBar(fuertes$richter, 'lightcoral'),
+              backgroundSize = '100% 90%',
+              backgroundRepeat = 'no-repeat',
+              backgroundPosition = 'center')
+```
+
+# Análisis
+
+## Row
+
+### Column {width=50%}
+```{r}
+#| title: "Distribución por Categoría de Magnitud"
+
+# Crear gráfico de barras por categoría
+por_categoria <- terremotos_clean %>%
+  count(mag_categoria, name = "cantidad") %>%
+  mutate(mag_categoria = factor(mag_categoria, levels = c("Menor", "Moderado", "Fuerte", "Mayor")))
+
+p1 <- ggplot(por_categoria, aes(x = mag_categoria, y = cantidad, fill = mag_categoria)) +
+  geom_col(alpha = 0.8, width = 0.7) +
+  scale_fill_manual(
+    values = c("Menor" = "#FEE5D9", 
+               "Moderado" = "#FCAE91", 
+               "Fuerte" = "#FB6A4A", 
+               "Mayor" = "#CB181D"),
+    name = "Categoría"
+  ) +
+  labs(
+    title = "",
+    x = "Categoría de Magnitud", 
+    y = "Número de Terremotos"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+    plot.margin = margin(10, 10, 10, 10)
+  ) +
+  geom_text(aes(label = format(cantidad, big.mark = ",")), 
+            vjust = -0.5, size = 3)
+
+ggplotly(p1, tooltip = c("x", "y"))
+```
+
+### Column {width=50%}
+```{r}
+#| title: "Relación Magnitud vs Profundidad"
+
+# Filtrar 
+datos_filtrados <- terremotos_clean %>%
+  filter(
+    focal_depth > 0, 
+    focal_depth < 700,  # Eliminar profundidades extremas
+    richter > 0,
+    richter < 10
+  ) %>%
+  sample_n(min(5000, nrow(.)))  
+
+p2 <- ggplot(datos_filtrados, aes(x = focal_depth, y = richter, color = mag_categoria)) +
+  geom_point(alpha = 0.6, size = 1) +
+  geom_smooth(method = "loess", se = FALSE, color = "darkblue", size = 1) +
+  scale_color_manual(
+    values = c("Menor" = "#74C476", 
+               "Moderado" = "#FD8D3C", 
+               "Fuerte" = "#E31A1C", 
+               "Mayor" = "#800026"),
+    name = "Categoría"
+  ) +
+  labs(
+    title = "",
+    x = "Profundidad (km)", 
+    y = "Magnitud Richter"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    legend.title = element_text(size = 10),
+    legend.text = element_text(size = 8)
+  )
+
+ggplotly(p2, tooltip = c("x", "y", "colour")) %>%
+  layout(legend = list(orientation = "h", y = -0.2))
+```
+
+## Row
+
+### Column {width=100%}
+```{r}
+#| title: "Estadísticas por Categoría de Magnitud"
+
+# tabla de estadísticas
+stats_tabla <- terremotos_clean %>%
+  group_by(mag_categoria) %>%
+  summarise(
+    Cantidad = n(),
+    `Mag Promedio` = round(mean(richter, na.rm = TRUE), 2),
+    `Mag Máxima` = round(max(richter, na.rm = TRUE), 2),
+    `Prof Promedio` = round(mean(focal_depth, na.rm = TRUE), 1),
+    `Prof Máxima` = round(max(focal_depth, na.rm = TRUE), 1),
+    .groups = 'drop'
+  ) %>%
+  arrange(desc(`Mag Promedio`))
+
+datatable(stats_tabla,
+          options = list(
+            pageLength = 10,
+            dom = 't',
+            columnDefs = list(
+              list(className = 'dt-center', targets = 1:5)
+            )
+          ),
+          class = 'stripe compact') %>%
+  formatStyle(columns = c("Cantidad"), 
+              background = styleColorBar(stats_tabla$Cantidad, 'lightblue')) %>%
+  formatStyle(columns = c("Mag Máxima"), 
+              background = styleColorBar(stats_tabla$`Mag Máxima`, 'lightcoral'))
+```
+
